@@ -1,0 +1,21 @@
+{
+  "name": "@agentsim/mcp-server",
+  "version": "0.1.1",
+  "description": "AgentSIM MCP server — real phone numbers for AI agents",
+  "keywords": ["mcp", "agents", "sms", "otp", "phone", "ai", "claude", "cursor"],
+  "homepage": "https://agentsim.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agentsimdev/agentsim-mcp"
+  },
+  "license": "MIT",
+  "bin": {
+    "agentsim-mcp": "./bin/agentsim-mcp.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

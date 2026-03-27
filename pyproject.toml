@@ -1,0 +1,43 @@
+[project]
+name = "agentsim-mcp"
+version = "0.9.0"
+description = "AgentSIM MCP server — phone number provisioning tools for AI coding assistants"
+readme = {text = "<!-- mcp-name: dev.agentsim/mcp -->\n\nReal SIM-backed phone numbers for AI agents. Provision a number, receive OTP codes, release — in 3 API calls. No VoIP. Carrier lookup returns `mobile`.\n\nSee [agentsim.dev](https://agentsim.dev) for documentation.", content-type = "text/markdown"}
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["mcp", "agents", "otp", "sms", "ai", "claude", "cursor"]
+authors = [
+  { name = "AgentSIM", email = "hello@agentsim.dev" },
+]
+dependencies = [
+  "fastmcp>=0.4",
+  "httpx>=0.27",
+  "pydantic>=2.0",
+  "uvicorn>=0.29",
+]
+
+[project.urls]
+Homepage = "https://agentsim.dev"
+Repository = "https://github.com/agentsimdev/agentsim-mcp"
+Documentation = "https://docs.agentsim.dev/mcp"
+Changelog = "https://github.com/agentsimdev/agentsim-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+agentsim-mcp = "agentsim_mcp.server:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "respx>=0.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentsim_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
