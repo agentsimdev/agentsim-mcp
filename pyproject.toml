@@ -18,9 +18,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://agentsim.dev"
-Repository = "https://github.com/agentsimdev/agentsim-mcp"
-Documentation = "https://docs.agentsim.dev/mcp"
-Changelog = "https://github.com/agentsimdev/agentsim-mcp/blob/main/CHANGELOG.md"
+Repository = "https://github.com/agentsimdev/agentsim"
+Documentation = "https://docs.agentsim.dev"
+Changelog = "https://github.com/agentsimdev/agentsim/blob/main/CHANGELOG.md"
 
 [project.scripts]
 agentsim-mcp = "agentsim_mcp.server:main"
