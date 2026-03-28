@@ -6,7 +6,8 @@
   "homepage": "https://agentsim.dev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/agentsimdev/agentsim-mcp"
+    "url": "https://github.com/agentsimdev/agentsim",
+    "directory": "mcp"
   },
   "license": "MIT",
   "bin": {
