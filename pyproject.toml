@@ -1,6 +1,6 @@
 [project]
 name = "agentsim-mcp"
-version = "0.10.0"
+version = "0.10.1"
 description = "AgentSIM MCP server — phone number provisioning tools for AI coding assistants"
 readme = {text = "<!-- mcp-name: dev.agentsim/mcp -->\n\nReal SIM-backed phone numbers for AI agents. Provision a number, receive OTP codes, release — in 3 API calls. No VoIP. Carrier lookup returns `mobile`.\n\nSee [agentsim.dev](https://agentsim.dev) for documentation.", content-type = "text/markdown"}
 requires-python = ">=3.11"
