@@ -33,7 +33,7 @@ wait_for_otp again with the same session_id.
 Always release the number when finished, even on error, to avoid wasting pool capacity.
 """
 
-mcp = FastMCP("AgentSIM", version="0.1.0", instructions=MCP_INSTRUCTIONS)
+mcp = FastMCP("AgentSIM", version="0.9.0", instructions=MCP_INSTRUCTIONS)
 
 _API_KEY = os.environ.get("AGENTSIM_API_KEY", "")
 _BASE_URL = os.environ.get("AGENTSIM_BASE_URL", "https://api.agentsim.dev/v1").rstrip("/")
@@ -94,6 +94,107 @@ async def _request(method: str, path: str, params: Optional[dict[str, str]] = No
         message = body.get("message", response.text)
         raise ToolError(f"AgentSIM API error [{code}]: {message}")
     return body
+
+
+# --- Resources (improve Smithery quality score) ---
+
+@mcp.resource("agentsim://status")
+async def account_status() -> str:
+    """Current AgentSIM account status including active sessions and usage."""
+    if not _API_KEY:
+        return "AGENTSIM_API_KEY not configured. Get one at https://agentsim.dev/dashboard"
+    try:
+        data = await _request("GET", "/sessions")
+        sessions = data.get("sessions", [])
+        return f"Active sessions: {len(sessions)}\n" + "\n".join(
+            f"  - {s.get('number', 'unknown')} (agent: {s.get('agent_id', 'unknown')}, expires: {s.get('expires_at', 'unknown')})"
+            for s in sessions
+        ) if sessions else "No active sessions."
+    except Exception as e:
+        return f"Could not fetch status: {e}"
+
+
+@mcp.resource("agentsim://docs/quickstart")
+def quickstart_guide() -> str:
+    """AgentSIM quickstart guide — how to get started in 60 seconds."""
+    return """# AgentSIM Quickstart
+
+## 1. Get an API Key
+Sign up at https://agentsim.dev and grab your API key from the dashboard.
+
+## 2. Install
+```bash
+# Claude Code / Cursor
+claude mcp add agentsim -e AGENTSIM_API_KEY=asm_live_xxx -- uvx agentsim-mcp
+
+# Or use the remote server (no install needed)
+# URL: https://mcp.agentsim.dev/mcp
+```
+
+## 3. Verify a Phone Number
+Ask your AI assistant:
+> "Verify my Stripe account with a phone number using AgentSIM"
+
+The agent will:
+1. Provision a real mobile number
+2. Enter it on Stripe
+3. Wait for the OTP
+4. Complete verification
+5. Release the number
+
+## Pricing
+- 10 free sessions/month
+- $0.99 per session after that
+- No monthly commitment
+
+## Links
+- Docs: https://docs.agentsim.dev
+- Examples: https://github.com/agentsimdev/agentsim-examples
+- Support: hello@agentsim.dev
+"""
+
+
+# --- Prompts (improve Smithery quality score) ---
+
+@mcp.prompt()
+def verify_phone_number(service: str = "Stripe", agent_id: str = "my-agent") -> str:
+    """Step-by-step guide to verify a phone number on a target service.
+
+    Walks through the full AgentSIM workflow: provision → enter number → wait for OTP → use code → release.
+    """
+    return f"""Follow these steps to verify a phone number on {service}:
+
+1. Call provision_number with agent_id="{agent_id}" to get a real mobile number
+2. Enter the returned phone number on {service}'s verification page
+3. Call wait_for_otp with the session_id to receive the OTP code
+4. Enter the OTP code on {service}
+5. Call release_number to free the session
+
+Important:
+- If wait_for_otp returns status=carrier_retry_required, use the new_number instead
+- Always call release_number when done, even on error
+- Numbers are real T-Mobile SIM — they pass carrier lookup on all major services"""
+
+
+@mcp.prompt()
+def debug_verification_failure(error_message: str = "This phone number cannot be used for verification") -> str:
+    """Diagnose why phone verification failed and suggest fixes.
+
+    Common issues: VoIP blocking, carrier cold-start, number already used.
+    """
+    return f"""The user encountered this verification error: "{error_message}"
+
+Diagnosis steps:
+1. Check if the number was provisioned via provision_number (real SIM, not VoIP)
+2. Use list_numbers to see active sessions and confirm the number is still leased
+3. Use get_messages to check if any SMS was received but not parsed as OTP
+4. If the service rejected the number outright, it may be a cooldown issue — try provisioning a new number
+
+Common causes:
+- "Cannot be used for verification" → Usually VoIP detection (AgentSIM numbers should pass this)
+- No OTP received → Carrier cold-start filtering, try auto_reroute=true
+- OTP expired → Service timeout, call wait_for_otp immediately after triggering SMS
+- Number already used → Some services track numbers, provision a fresh one"""
 
 
 # --- Tool input models ---
