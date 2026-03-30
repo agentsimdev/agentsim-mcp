@@ -64,7 +64,7 @@ Connect directly to the hosted MCP server without installing anything locally:
 
 ## Auth
 
-Set `AGENTSIM_API_KEY` in your environment. Get your key at [agentsim.dev/dashboard](https://agentsim.dev/dashboard).
+Set `AGENTSIM_API_KEY` in your environment. Get your key at [console.agentsim.dev](https://console.agentsim.dev).
 
 ## Supported Countries
 

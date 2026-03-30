@@ -59,7 +59,7 @@ async def _server_card(request: Request) -> JSONResponse:
                     "apiKey": {
                         "type": "string",
                         "title": "AgentSIM API Key",
-                        "description": "Your AgentSIM API key — get one at https://agentsim.dev/dashboard",
+                        "description": "Your AgentSIM API key — get one at https://console.agentsim.dev",
                     }
                 },
                 "required": ["apiKey"],
@@ -102,7 +102,7 @@ async def _request(method: str, path: str, params: Optional[dict[str, str]] = No
 async def account_status() -> str:
     """Current AgentSIM account status including active sessions and usage."""
     if not _API_KEY:
-        return "AGENTSIM_API_KEY not configured. Get one at https://agentsim.dev/dashboard"
+        return "AGENTSIM_API_KEY not configured. Get one at https://console.agentsim.dev"
     try:
         data = await _request("GET", "/sessions")
         sessions = data.get("sessions", [])
@@ -387,7 +387,7 @@ class _WellKnownMiddleware:
                             "apiKey": {
                                 "type": "string",
                                 "title": "AgentSIM API Key",
-                                "description": "Your AgentSIM API key — get one at https://agentsim.dev/dashboard",
+                                "description": "Your AgentSIM API key — get one at https://console.agentsim.dev",
                             }
                         },
                         "required": ["apiKey"],
