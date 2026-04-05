@@ -1,6 +1,6 @@
 {
   "name": "@agentsim/mcp-server",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "AgentSIM MCP server — real phone numbers for AI agents",
   "keywords": [
     "mcp",
