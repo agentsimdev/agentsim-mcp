@@ -1,4 +1,4 @@
-"""AgentSIM MCP Server — give AI coding assistants a real phone number for OTP relay."""
+"""AgentSIM MCP Server — give AI coding assistants OTP session tools."""
 
 from __future__ import annotations
 
@@ -15,21 +15,20 @@ from starlette.responses import JSONResponse
 
 # LLM-facing server description
 MCP_INSTRUCTIONS = """\
-AgentSIM gives you a real carrier-routed mobile phone number so you can receive SMS OTP codes \
-autonomously — no human intervention required.
+AgentSIM gives you OTP session tools for browser agents and controlled auth workflows.
+It provisions temporary programmable US numbers, waits for SMS, parses OTPs, exposes raw
+messages for diagnostics, and releases sessions when finished.
 
 Typical workflow:
-1. Call `provision_number` to lease a mobile number (returns session_id + phone number).
-2. Trigger the SMS on the target service using that phone number.
-3. Call `wait_for_otp` with the session_id — it blocks until the OTP arrives (up to 120 s).
-4. Use the OTP code in your workflow.
+1. Call `provision_number` to lease a temporary number (returns session_id + phone number).
+2. Trigger the SMS in a verified-compatible target or controlled auth workflow.
+3. Call `wait_for_otp` with the session_id — it blocks until the OTP arrives or times out.
+4. If no OTP arrives, call `get_messages` and classify the outcome (`no_sms`, `sms_no_otp`,
+   `phone_rejected`, `anti_bot_gate`, etc.) instead of assuming parser failure.
 5. Call `release_number` to return the number to the pool when done.
 
-Carrier retry (handled automatically):
-If `wait_for_otp` returns status=carrier_retry_required, a replacement number has been
-provisioned on the same session. Re-enter the new_number on the target service, then call
-wait_for_otp again with the same session_id.
-
+Target-service support is empirical. Do not claim AgentSIM works everywhere or that strict
+consumer platforms will accept programmable numbers. Check https://docs.agentsim.dev/supported-services.
 Always release the number when finished, even on error, to avoid wasting pool capacity.
 """
 
@@ -48,7 +47,7 @@ async def _server_card(request: Request) -> JSONResponse:
     return JSONResponse({
         "name": "AgentSIM",
         "qualifiedName": "agentsim/agentsim",
-        "description": "Real SIM-backed phone numbers for AI agents — autonomous OTP capture. No VoIP. Carrier lookup returns mobile.",
+        "description": "OTP sessions and delivery diagnostics for browser agents. Provision a programmable US number, wait for SMS, inspect messages, and release. Target-service support is empirical.",
         "vendor": "AgentSIM",
         "homepage": "https://agentsim.dev",
         "license": "MIT",
@@ -131,15 +130,15 @@ claude mcp add agentsim -e AGENTSIM_API_KEY=asm_live_xxx -- uvx agentsim-mcp
 # URL: https://mcp.agentsim.dev/mcp
 ```
 
-## 3. Verify a Phone Number
+## 3. Run an OTP Session
 Ask your AI assistant:
-> "Verify my Stripe account with a phone number using AgentSIM"
+> "Use AgentSIM to test my staging phone OTP flow. Wait up to 120 seconds, inspect messages if no code arrives, classify the outcome, and release the session."
 
 The agent will:
-1. Provision a real mobile number
-2. Enter it on Stripe
+1. Provision a temporary programmable US number
+2. Enter it in your verified-compatible or controlled auth workflow
 3. Wait for the OTP
-4. Complete verification
+4. Inspect messages and classify delivery if no OTP arrives
 5. Release the number
 
 ## Pricing
@@ -157,23 +156,24 @@ The agent will:
 # --- Prompts (improve Smithery quality score) ---
 
 @mcp.prompt()
-def verify_phone_number(service: str = "Stripe", agent_id: str = "my-agent") -> str:
-    """Step-by-step guide to verify a phone number on a target service.
+def verify_phone_number(service: str = "staging auth flow", agent_id: str = "my-agent") -> str:
+    """Step-by-step guide to run an OTP session on a target workflow.
 
-    Walks through the full AgentSIM workflow: provision → enter number → wait for OTP → use code → release.
+    Walks through the full AgentSIM workflow: provision → enter number → wait for OTP → inspect diagnostics → release.
     """
-    return f"""Follow these steps to verify a phone number on {service}:
+    return f"""Follow these steps to run an OTP session on {service}:
 
-1. Call provision_number with agent_id="{agent_id}" to get a real mobile number
-2. Enter the returned phone number on {service}'s verification page
-3. Call wait_for_otp with the session_id to receive the OTP code
-4. Enter the OTP code on {service}
-5. Call release_number to free the session
+1. Check https://docs.agentsim.dev/supported-services if {service} is a third-party target
+2. Call provision_number with agent_id="{agent_id}" to get a temporary programmable US number
+3. Enter the returned phone number in {service}
+4. Call wait_for_otp with the session_id to receive the OTP code
+5. If wait_for_otp times out, call get_messages and classify the outcome as no_sms or sms_no_otp
+6. Call release_number to free the session
 
 Important:
-- If wait_for_otp returns status=carrier_retry_required, use the new_number instead
-- Always call release_number when done, even on error
-- Numbers are real T-Mobile SIM — they pass carrier lookup on all major services"""
+- Runtime integration is not a target-service support claim
+- Strict consumer services may reject or silently drop programmable numbers
+- Always call release_number when done, even on error"""
 
 
 @mcp.prompt()
@@ -185,16 +185,17 @@ def debug_verification_failure(error_message: str = "This phone number cannot be
     return f"""The user encountered this verification error: "{error_message}"
 
 Diagnosis steps:
-1. Check if the number was provisioned via provision_number (real SIM, not VoIP)
-2. Use list_numbers to see active sessions and confirm the number is still leased
-3. Use get_messages to check if any SMS was received but not parsed as OTP
-4. If the service rejected the number outright, it may be a cooldown issue — try provisioning a new number
+1. Use list_numbers to see active sessions and confirm the number is still leased
+2. Use get_messages to check if any SMS was received but not parsed as OTP
+3. Check the target UI for explicit phone rejection, CAPTCHA, hCaptcha, Arkose, or email-only fallback
+4. Check https://docs.agentsim.dev/supported-services for known target behavior
 
 Common causes:
-- "Cannot be used for verification" → Usually VoIP detection (AgentSIM numbers should pass this)
-- No OTP received → Carrier cold-start filtering, try auto_reroute=true
-- OTP expired → Service timeout, call wait_for_otp immediately after triggering SMS
-- Number already used → Some services track numbers, provision a fresh one"""
+- "Cannot be used for verification" → phone_rejected; the target may reject the current number class
+- No OTP received → no_sms; the target may have silently suppressed SMS or provider logs may show no send
+- CAPTCHA/puzzle before phone step → anti_bot_gate; this is not a phone-support verdict
+- OTP expired → wait window too short or target delay; inspect raw messages before retrying
+- Email-only path → email_only_flow; the tested flow did not exercise AgentSIM"""
 
 
 # --- Tool input models ---
@@ -245,10 +246,10 @@ async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str
 
 @mcp.tool()
 async def provision_number(input: ProvisionInput) -> dict[str, Any]:
-    """Lease a real mobile phone number for receiving SMS OTP codes.
+    """Lease a temporary programmable phone number for receiving SMS OTP codes.
 
     Returns the phone number (e164 format) and a session_id needed for all
-    subsequent calls. The number is exclusively yours for ttl_seconds.
+    subsequent calls. The number is reserved for your session for ttl_seconds.
 
     Next step: use the returned `number` on your target service to trigger an SMS,
     then call `wait_for_otp` with the returned `session_id`.
@@ -376,7 +377,7 @@ class _WellKnownMiddleware:
             await JSONResponse({
                 "name": "AgentSIM",
                 "qualifiedName": "agentsim/agentsim",
-                "description": "Real SIM-backed phone numbers for AI agents — autonomous OTP capture. No VoIP.",
+                "description": "OTP sessions and delivery diagnostics for browser agents. Provision a programmable US number, wait for SMS, inspect raw messages, and release.",
                 "vendor": "AgentSIM",
                 "homepage": "https://agentsim.dev",
                 "license": "MIT",

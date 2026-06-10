@@ -1,8 +1,8 @@
 [project]
 name = "agentsim-mcp"
-version = "0.15.0"
-description = "AgentSIM MCP server — phone number provisioning tools for AI coding assistants"
-readme = {text = "<!-- mcp-name: dev.agentsim/mcp -->\n\nReal SIM-backed phone numbers for AI agents. Provision a number, receive OTP codes, release — in 3 API calls. No VoIP. Carrier lookup returns `mobile`.\n\nSee [agentsim.dev](https://agentsim.dev) for documentation.", content-type = "text/markdown"}
+version = "0.16.0"
+description = "AgentSIM MCP server — OTP session tools for AI coding assistants"
+readme = {text = "<!-- mcp-name: dev.agentsim/mcp -->\n\nOTP sessions and delivery diagnostics for browser agents. Provision a programmable US number, wait for SMS, inspect raw messages, release. Target-service support is empirical.\n\nSee [agentsim.dev](https://agentsim.dev) for documentation.", content-type = "text/markdown"}
 requires-python = ">=3.11"
 license = { text = "MIT" }
 keywords = ["mcp", "agents", "otp", "sms", "ai", "claude", "cursor"]

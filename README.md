@@ -2,7 +2,7 @@
 
 <!-- mcp-name: dev.agentsim/mcp -->
 
-MCP server that exposes AgentSIM phone number tools to AI coding assistants — Claude Code, Cursor, Windsurf, and any other MCP-compatible host.
+MCP server that exposes AgentSIM OTP session tools to AI coding assistants: Claude Code, Cursor, Windsurf, and any other MCP-compatible host.
 
 ## Setup
 
@@ -56,7 +56,7 @@ Connect directly to the hosted MCP server without installing anything locally:
 
 | Tool | Description |
 |------|-------------|
-| `provision_number` | Provision a phone number for an agent — returns number, session ID, expiry |
+| `provision_number` | Provision a temporary programmable US number for an OTP session — returns number, session ID, expiry |
 | `wait_for_otp` | Long-poll until an OTP arrives on the session (returns parsed code) |
 | `get_messages` | List raw SMS messages received on a session |
 | `release_number` | Release a session early (number returned to pool) |
