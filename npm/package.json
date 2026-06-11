@@ -1,6 +1,6 @@
 {
   "name": "@agentsim/mcp-server",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "AgentSIM MCP server — OTP session tools for AI agents",
   "keywords": [
     "mcp",
