@@ -1,8 +1,16 @@
+# Build note: Nixpacks' uv provider emits `pip install uv==$NIXPACKS_UV_VERSION`
+# but no longer injects a default, producing `pip install uv==` (invalid) and a
+# failed build. A repo-side `nixpacks.toml [variables]` does NOT reach the build
+# env on Railway (verified), so the version is pinned via a Railway *service
+# variable*: NIXPACKS_UV_VERSION=0.11.20 (set on service 6d86e7b9). Keep it set.
 [build]
 builder = "nixpacks"
 
+# uv sync installs deps into the project venv at /app/.venv (NOT the Nixpacks
+# /opt/venv), so the server must run from /app/.venv or it crashes with
+# ModuleNotFoundError (httpx). Do not "restore" this to /opt/venv.
 [deploy]
-startCommand = "/opt/venv/bin/python -m agentsim_mcp.server --http"
+startCommand = "/app/.venv/bin/python -m agentsim_mcp.server --http"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
