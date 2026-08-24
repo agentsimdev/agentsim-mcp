@@ -15,21 +15,23 @@ from starlette.responses import JSONResponse
 
 # LLM-facing server description
 MCP_INSTRUCTIONS = """\
-AgentSIM gives you OTP session tools for browser agents and controlled auth workflows.
-It provisions temporary programmable US numbers, waits for SMS, parses OTPs, exposes raw
-messages for diagnostics, and releases sessions when finished.
+AgentSIM gives you authentication challenge tools for browser agents and controlled auth workflows.
+It opens challenges (SMS OTP, email OTP, magic links, WebAuthn detect-and-halt), waits for verdicts,
+and releases sessions when finished.
 
 Typical workflow:
-1. Call `provision_number` to lease a temporary number (returns session_id + phone number).
-2. Trigger the SMS in a verified-compatible target or controlled auth workflow.
-3. Call `wait_for_otp` with the session_id — it blocks until the OTP arrives or times out.
-4. If no OTP arrives, call `get_messages` and classify the outcome (`no_sms`, `sms_no_otp`,
-   `phone_rejected`, `anti_bot_gate`, etc.) instead of assuming parser failure.
-5. Call `release_number` to return the number to the pool when done.
+1. Call `open_challenge` with a channel (sms_otp | email_otp | magic_link | webauthn_required).
+2. Trigger the challenge in your target service or controlled auth workflow.
+3. Call `wait_for_verdict` with the session_id — it blocks until the outcome arrives or times out.
+4. If the verdict is policy_denied or webauthn_required, stop — these are control-plane halts.
+5. Call `release_number` to return the allocation to the pool when done.
 
-Target-service support is empirical. Do not claim AgentSIM works everywhere or that strict
-consumer platforms will accept programmable numbers. Check https://docs.agentsim.dev/supported-services.
-Always release the number when finished, even on error, to avoid wasting pool capacity.
+Supported channels: sms_otp (programmable US numbers), email_otp (mock inject), magic_link (mock inject),
+webauthn_required (detect-and-halt). Policy layer blocks third-party services by default; allow your
+staging/development services through account policies. Check https://docs.agentsim.dev/policies-verdicts.
+
+Legacy aliases: `provision_number` → `open_challenge`, `wait_for_otp` → `wait_for_verdict`.
+Always release the session when finished, even on error, to avoid wasting pool capacity.
 """
 
 mcp = FastMCP("AgentSIM", version="0.9.0", instructions=MCP_INSTRUCTIONS)
@@ -200,11 +202,25 @@ Common causes:
 
 # --- Tool input models ---
 
+class OpenChallengeInput(BaseModel):
+    agent_id: str = Field(description="Unique identifier for the agent requesting the challenge (e.g. 'checkout-bot').")
+    channel: str = Field(default="sms_otp", description="Challenge channel: sms_otp | email_otp | magic_link | webauthn_required.")
+    service_url: Optional[str] = Field(default=None, description="Optional URL of the target service for policy evaluation.")
+    country: str = Field(default="US", description="ISO 3166-1 alpha-2 country code (sms_otp only). Supported: US.")
+    ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="How long to hold the session (seconds). Default 1 hour.")
+    webhook_url: Optional[str] = Field(default=None, description="Optional HTTPS URL to receive verdict via webhook instead of polling.")
+
+
 class ProvisionInput(BaseModel):
     agent_id: str = Field(description="Unique identifier for the agent requesting the number (e.g. 'checkout-bot').")
     country: str = Field(default="US", description="ISO 3166-1 alpha-2 country code. Supported: US. More countries coming soon.")
     ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="How long to hold the number (seconds). Default 1 hour.")
     webhook_url: Optional[str] = Field(default=None, description="Optional HTTPS URL to receive OTP via webhook instead of polling.")
+
+
+class WaitForVerdictInput(BaseModel):
+    session_id: str = Field(description="Session ID returned by open_challenge.")
+    timeout_seconds: int = Field(default=60, ge=1, le=120, description="Maximum seconds to wait. Default 60.")
 
 
 class WaitInput(BaseModel):
@@ -214,7 +230,7 @@ class WaitInput(BaseModel):
 
 
 class SessionInput(BaseModel):
-    session_id: str = Field(description="Session ID returned by provision_number.")
+    session_id: str = Field(description="Session ID returned by open_challenge or provision_number.")
 
 
 async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str, Any]:
@@ -245,8 +261,61 @@ async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str
 # --- Tools ---
 
 @mcp.tool()
+async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
+    """Open an authentication challenge session.
+
+    Supports multiple channels: sms_otp (programmable US number), email_otp (mock inbox),
+    magic_link (mock inbox), and webauthn_required (detect-and-halt).
+
+    Returns the challenge identifier (phone number or email address) and a session_id
+    needed for all subsequent calls. The session is reserved for ttl_seconds.
+
+    Next step: use the returned identifier on your target service to trigger the challenge,
+    then call `wait_for_verdict` with the returned `session_id`.
+    """
+    if not _API_KEY:
+        raise ToolError("AGENTSIM_API_KEY environment variable is not set.")
+
+    body: dict[str, Any] = {
+        "agent_id": input.agent_id,
+        "channel": input.channel,
+        "ttl_seconds": input.ttl_seconds,
+    }
+    if input.channel == "sms_otp":
+        body["country"] = input.country
+    if input.service_url:
+        body["service_url"] = input.service_url
+    if input.webhook_url:
+        body["webhook_url"] = input.webhook_url
+
+    data = await _request("POST", "/sessions", json=body)
+
+    result: dict[str, Any] = {
+        "session_id": data["session_id"],
+        "channel": data.get("channel", input.channel),
+        "agent_id": data["agent_id"],
+        "expires_at": data["expires_at"],
+    }
+
+    if input.channel == "sms_otp":
+        result["number"] = data["number"]
+        result["country"] = data["country"]
+        result["next_step"] = f"Use `{data['number']}` on your target service, then call wait_for_verdict(session_id='{data['session_id']}')"
+    elif input.channel in ("email_otp", "magic_link"):
+        result["inbox_address"] = data.get("inbox_address", data.get("email"))
+        result["next_step"] = f"Use `{result['inbox_address']}` on your target service, then call wait_for_verdict(session_id='{data['session_id']}')"
+    else:
+        result["next_step"] = f"Call wait_for_verdict(session_id='{data['session_id']}') to check for policy or WebAuthn verdicts"
+
+    return result
+
+
+@mcp.tool()
 async def provision_number(input: ProvisionInput) -> dict[str, Any]:
     """Lease a temporary programmable phone number for receiving SMS OTP codes.
+
+    DEPRECATED: Use `open_challenge` with channel="sms_otp" instead. This tool is kept
+    for backward compatibility with existing MCP clients.
 
     Returns the phone number (e164 format) and a session_id needed for all
     subsequent calls. The number is reserved for your session for ttl_seconds.
@@ -261,6 +330,7 @@ async def provision_number(input: ProvisionInput) -> dict[str, Any]:
         "agent_id": input.agent_id,
         "country": input.country,
         "ttl_seconds": input.ttl_seconds,
+        "channel": "sms_otp",
     }
     if input.webhook_url:
         body["webhook_url"] = input.webhook_url
@@ -278,8 +348,60 @@ async def provision_number(input: ProvisionInput) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def wait_for_verdict(input: WaitForVerdictInput) -> dict[str, Any]:
+    """Block until a challenge verdict arrives for this session.
+
+    Polls the AgentSIM API for up to `timeout_seconds`. Returns the structured verdict,
+    which may include:
+    - otp_code: the parsed OTP (for sms_otp, email_otp channels)
+    - magic_link: the extracted HTTPS URL (for magic_link channel)
+    - webauthn_required: true if WebAuthn/passkey was detected (detect-and-halt)
+    - policy_denied: true if the service_url is blocked by account policy
+
+    Always call `release_number` after processing the verdict.
+    """
+    try:
+        data = await _request(
+            "POST",
+            f"/sessions/{input.session_id}/wait",
+            json={"timeout_seconds": input.timeout_seconds},
+        )
+    except ToolError as exc:
+        if "otp_timeout" in str(exc) or "challenge_timeout" in str(exc):
+            raise ToolError(
+                f"No verdict received within {input.timeout_seconds}s. "
+                "Check that you entered the correct identifier on the target service. "
+                "You can retry wait_for_verdict or call release_number to free the session."
+            ) from exc
+        raise
+
+    result: dict[str, Any] = {
+        "session_id": input.session_id,
+        "received_at": data.get("received_at"),
+    }
+
+    if "otp_code" in data:
+        result["otp_code"] = data["otp_code"]
+        result["from"] = data.get("from_number") or data.get("from")
+    if "magic_link" in data:
+        result["magic_link"] = data["magic_link"]
+    if data.get("webauthn_required"):
+        result["webauthn_required"] = True
+        result["verdict"] = "webauthn_required"
+    if data.get("policy_denied"):
+        result["policy_denied"] = True
+        result["verdict"] = "policy_denied"
+
+    result["next_step"] = "Use the verdict in your workflow, then call release_number to free the session."
+    return result
+
+
+@mcp.tool()
 async def wait_for_otp(input: WaitInput) -> dict[str, Any]:
     """Block until an SMS OTP arrives for this session, then return the code.
+
+    DEPRECATED: Use `wait_for_verdict` instead. This tool is kept for backward
+    compatibility with existing MCP clients.
 
     Polls the AgentSIM API for up to `timeout_seconds`. Returns the OTP code
     and the message it was extracted from.

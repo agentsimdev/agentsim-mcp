@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from agentsim_mcp.server import mcp, ProvisionInput, WaitInput, SessionInput
+from agentsim_mcp.server import mcp, ProvisionInput, WaitInput, SessionInput, OpenChallengeInput, WaitForVerdictInput
 
 
-EXPECTED_TOOLS = {"provision_number", "wait_for_otp", "get_messages", "release_number", "list_numbers"}
+EXPECTED_TOOLS = {
+    # New control-plane nouns
+    "open_challenge",
+    "wait_for_verdict",
+    # Legacy aliases (backward compatibility)
+    "provision_number",
+    "wait_for_otp",
+    # Other tools
+    "get_messages",
+    "release_number",
+    "list_numbers",
+}
 
 
 def test_mcp_instance_exists() -> None:
@@ -40,3 +51,36 @@ def test_provision_input_ttl_bounds() -> None:
 
     with pytest.raises(Exception):
         ProvisionInput(agent_id="test", ttl_seconds=100_000)  # above 86400
+
+
+def test_open_challenge_input_defaults() -> None:
+    inp = OpenChallengeInput(agent_id="test-bot")
+    assert inp.channel == "sms_otp"
+    assert inp.country == "US"
+    assert inp.ttl_seconds == 3600
+    assert inp.service_url is None
+
+
+def test_open_challenge_input_channels() -> None:
+    for channel in ["sms_otp", "email_otp", "magic_link", "webauthn_required"]:
+        inp = OpenChallengeInput(agent_id="test-bot", channel=channel)
+        assert inp.channel == channel
+
+
+def test_wait_for_verdict_input_defaults() -> None:
+    inp = WaitForVerdictInput(session_id="sess-xyz")
+    assert inp.timeout_seconds == 60
+
+
+def test_wait_for_verdict_input_requires_session_id() -> None:
+    import pytest
+
+    with pytest.raises(Exception):
+        WaitForVerdictInput()  # type: ignore[call-arg]
+
+
+async def test_all_tools_registered() -> None:
+    """Verify both new tools and legacy aliases are registered."""
+    tools = await mcp.list_tools()
+    registered_tools = {tool.name for tool in tools}
+    assert EXPECTED_TOOLS.issubset(registered_tools), f"Missing tools: {EXPECTED_TOOLS - registered_tools}"

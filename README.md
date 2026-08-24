@@ -54,13 +54,22 @@ Connect directly to the hosted MCP server without installing anything locally:
 
 ## Tools
 
+### Control-Plane Nouns (Recommended)
+
 | Tool | Description |
 |------|-------------|
-| `provision_number` | Provision a temporary programmable US number for an OTP session — returns number, session ID, expiry |
-| `wait_for_otp` | Long-poll until an OTP arrives on the session (returns parsed code) |
+| `open_challenge` | Open an authentication challenge session — accepts channel (sms_otp \| email_otp \| magic_link \| webauthn_required), returns session ID + identifier (phone number or email address) |
+| `wait_for_verdict` | Long-poll for the challenge verdict — returns structured outcome including otp_code, magic_link, webauthn_required, or policy_denied |
 | `get_messages` | List raw SMS messages received on a session |
-| `release_number` | Release a session early (number returned to pool) |
+| `release_number` | Release a session early (allocation returned to pool) |
 | `list_numbers` | List all active sessions for this account |
+
+### Legacy Aliases (Backward Compatibility)
+
+| Tool | Maps to | Description |
+|------|---------|-------------|
+| `provision_number` | `open_challenge(channel=sms_otp)` | Provision a temporary programmable US number for SMS OTP — kept for backward compatibility |
+| `wait_for_otp` | `wait_for_verdict` | Long-poll until an OTP arrives — kept for backward compatibility |
 
 ## Auth
 
