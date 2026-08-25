@@ -2,7 +2,7 @@
 
 <!-- mcp-name: dev.agentsim/mcp -->
 
-MCP server that exposes AgentSIM OTP session tools to AI coding assistants: Claude Code, Cursor, Windsurf, and any other MCP-compatible host.
+MCP server that exposes AgentSIM challenge tools to AI coding assistants: Claude Code, Cursor, Windsurf, and any other MCP-compatible host. Primary tools: `open_challenge`, `wait_for_verdict`. Aliases: `provision_number`, `wait_for_otp`.
 
 ## Setup
 

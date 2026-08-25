@@ -1,4 +1,4 @@
-"""AgentSIM MCP Server — give AI coding assistants OTP session tools."""
+"""AgentSIM MCP Server — challenge · policy · verdict tools for AI coding assistants."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ async def _server_card(request: Request) -> JSONResponse:
     return JSONResponse({
         "name": "AgentSIM",
         "qualifiedName": "agentsim/agentsim",
-        "description": "OTP sessions and delivery diagnostics for browser agents. Provision a programmable US number, wait for SMS, inspect messages, and release. Target-service support is empirical.",
+        "description": "Auth challenge tools for browser agents. Open a challenge, wait for a verdict, inspect evidence, and close the session. SMS is connector 0. Authorized use only, on apps you own.",
         "vendor": "AgentSIM",
         "homepage": "https://agentsim.dev",
         "license": "MIT",
@@ -132,16 +132,18 @@ claude mcp add agentsim -e AGENTSIM_API_KEY=asm_live_xxx -- uvx agentsim-mcp
 # URL: https://mcp.agentsim.dev/mcp
 ```
 
-## 3. Run an OTP Session
+## 3. Run a challenge
 Ask your AI assistant:
-> "Use AgentSIM to test my staging phone OTP flow. Wait up to 120 seconds, inspect messages if no code arrives, classify the outcome, and release the session."
+> "Use AgentSIM to test my staging phone OTP wall. Open a challenge, wait up to 120 seconds for the verdict, inspect messages if nothing arrives, and close the session."
 
 The agent will:
-1. Provision a temporary programmable US number
-2. Enter it in your verified-compatible or controlled auth workflow
-3. Wait for the OTP
-4. Inspect messages and classify delivery if no OTP arrives
-5. Release the number
+1. Call open_challenge (sms_otp by default)
+2. Enter the identifier on the owned auth wall
+3. Call wait_for_verdict
+4. Inspect messages if the verdict is a timeout
+5. Call release_number to close the session
+
+provision_number and wait_for_otp remain aliases.
 
 ## Pricing
 - 10 free sessions/month
@@ -159,22 +161,23 @@ The agent will:
 
 @mcp.prompt()
 def verify_phone_number(service: str = "staging auth flow", agent_id: str = "my-agent") -> str:
-    """Step-by-step guide to run an OTP session on a target workflow.
+    """Step-by-step guide to run an auth challenge on a target workflow.
 
-    Walks through the full AgentSIM workflow: provision → enter number → wait for OTP → inspect diagnostics → release.
+    Walks through the AgentSIM workflow: open_challenge · wait_for_verdict · release_number.
     """
-    return f"""Follow these steps to run an OTP session on {service}:
+    return f"""Follow these steps to run an auth challenge on {service}:
 
-1. Check https://docs.agentsim.dev/supported-services if {service} is a third-party target
-2. Call provision_number with agent_id="{agent_id}" to get a temporary programmable US number
-3. Enter the returned phone number in {service}
-4. Call wait_for_otp with the session_id to receive the OTP code
-5. If wait_for_otp times out, call get_messages and classify the outcome as no_sms or sms_no_otp
-6. Call release_number to free the session
+1. Check https://docs.agentsim.dev/supported-services if {service} is a third-party target. Google and Stripe are refused.
+2. Call open_challenge with agent_id="{agent_id}" (channel defaults to sms_otp)
+3. Enter the returned identifier on {service} (an app you own)
+4. Call wait_for_verdict with the session_id
+5. If wait_for_verdict times out, call get_messages and classify the outcome
+6. Call release_number to close the session
+
+provision_number and wait_for_otp are aliases for existing callers.
 
 Important:
 - Runtime integration is not a target-service support claim
-- Strict consumer services may reject or silently drop programmable numbers
 - Always call release_number when done, even on error"""
 
 
@@ -312,16 +315,16 @@ async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def provision_number(input: ProvisionInput) -> dict[str, Any]:
-    """Lease a temporary programmable phone number for receiving SMS OTP codes.
+    """Open an SMS challenge session (alias for open_challenge with channel=sms_otp).
 
     DEPRECATED: Use `open_challenge` with channel="sms_otp" instead. This tool is kept
     for backward compatibility with existing MCP clients.
 
     Returns the phone number (e164 format) and a session_id needed for all
-    subsequent calls. The number is reserved for your session for ttl_seconds.
+    subsequent calls. The session is reserved for ttl_seconds.
 
-    Next step: use the returned `number` on your target service to trigger an SMS,
-    then call `wait_for_otp` with the returned `session_id`.
+    Next step: use the returned `number` on an app you own to trigger the wall,
+    then call `wait_for_verdict` (or the `wait_for_otp` alias) with the `session_id`.
     """
     if not _API_KEY:
         raise ToolError("AGENTSIM_API_KEY environment variable is not set.")
@@ -398,16 +401,16 @@ async def wait_for_verdict(input: WaitForVerdictInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def wait_for_otp(input: WaitInput) -> dict[str, Any]:
-    """Block until an SMS OTP arrives for this session, then return the code.
+    """Block until an SMS verdict arrives for this session (alias for wait_for_verdict).
 
     DEPRECATED: Use `wait_for_verdict` instead. This tool is kept for backward
     compatibility with existing MCP clients.
 
     Polls the AgentSIM API for up to `timeout_seconds`. Returns the OTP code
-    and the message it was extracted from.
+    when the SMS challenge resolves.
 
-    If the OTP does not arrive in time, raises a ToolError with advice on retrying.
-    Always call `release_number` after you have used the OTP.
+    If the verdict does not arrive in time, raises a ToolError with advice on retrying.
+    Always call `release_number` after you have used the verdict.
     """
     try:
         data = await _request(
@@ -439,7 +442,7 @@ async def get_messages(input: SessionInput) -> dict[str, Any]:
     """List all SMS messages received in this session without consuming the OTP.
 
     Use this to inspect raw messages or check if an SMS arrived before calling
-    wait_for_otp. Does NOT mark the OTP as consumed.
+    wait_for_verdict. Does NOT mark the OTP as consumed.
     """
     data = await _request("GET", f"/sessions/{input.session_id}/messages")
     return {
@@ -450,10 +453,10 @@ async def get_messages(input: SessionInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def release_number(input: SessionInput) -> dict[str, Any]:
-    """Release a provisioned number back to the pool.
+    """Close a challenge session.
 
-    Always call this when you are done with the session — even on error —
-    to avoid consuming pool capacity unnecessarily.
+    Always call this when you are done — even on error — so the session does
+    not keep consuming pool capacity.
     """
     try:
         data = await _request("DELETE", f"/sessions/{input.session_id}")
@@ -472,10 +475,9 @@ async def release_number(input: SessionInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def list_numbers(agent_id: Optional[str] = None) -> dict[str, Any]:
-    """List active sessions, optionally filtered by agent_id.
+    """List active challenge sessions, optionally filtered by agent_id.
 
-    Use this to check for leaked sessions or inspect what numbers are
-    currently active in your account.
+    Use this to check for leaked sessions or inspect what is currently active.
     """
     query_params = {"agent_id": agent_id} if agent_id else None
 
@@ -499,7 +501,7 @@ class _WellKnownMiddleware:
             await JSONResponse({
                 "name": "AgentSIM",
                 "qualifiedName": "agentsim/agentsim",
-                "description": "OTP sessions and delivery diagnostics for browser agents. Provision a programmable US number, wait for SMS, inspect raw messages, and release.",
+                "description": "Auth challenge tools for browser agents. Open a challenge, wait for a verdict, inspect evidence, and close the session.",
                 "vendor": "AgentSIM",
                 "homepage": "https://agentsim.dev",
                 "license": "MIT",
