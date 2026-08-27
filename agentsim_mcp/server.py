@@ -530,7 +530,7 @@ def main() -> None:
         from starlette.routing import Route, Mount
         import uvicorn
 
-        mcp_http = mcp.http_app()
+        mcp_http = mcp.http_app(stateless_http=True)
 
         # /health and /.well-known/* are intercepted before FastMCP's ASGI
         # app so they bypass session/auth middleware entirely.

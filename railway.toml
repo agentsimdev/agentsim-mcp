@@ -6,11 +6,11 @@
 [build]
 builder = "nixpacks"
 
-# uv sync installs deps into the project venv at /app/.venv (NOT the Nixpacks
-# /opt/venv), so the server must run from /app/.venv or it crashes with
-# ModuleNotFoundError (httpx). Do not "restore" this to /opt/venv.
+# Nixpacks installs uv itself in /opt/venv, while uv manages the project and its
+# dependencies in /app/.venv. Launch through uv so it validates the project
+# environment instead of executing a venv path that can be absent at runtime.
 [deploy]
-startCommand = "/app/.venv/bin/python -m agentsim_mcp.server --http"
+startCommand = "/opt/venv/bin/uv run --frozen --no-dev python -m agentsim_mcp.server --http"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"

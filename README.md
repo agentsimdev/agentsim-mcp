@@ -52,6 +52,8 @@ Connect directly to the hosted MCP server without installing anything locally:
 }
 ```
 
+The hosted endpoint uses stateless HTTP and does not issue `mcp-session-id` headers. The `session_id` returned by AgentSIM tools identifies a challenge and remains valid across tool calls.
+
 ## Tools
 
 ### Control-Plane Nouns (Recommended)
