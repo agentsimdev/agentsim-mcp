@@ -60,7 +60,7 @@ The hosted endpoint uses stateless HTTP and does not issue `mcp-session-id` head
 
 | Tool | Description |
 |------|-------------|
-| `open_challenge` | Open an authentication challenge session — accepts channel (sms_otp \| email_otp \| magic_link \| webauthn_required), returns session ID + identifier (phone number or email address) |
+| `open_challenge` | Open an authentication challenge session for a required owned `service_url`; accepts channel (sms_otp \| email_otp \| magic_link \| webauthn_required), returns session ID + identifier |
 | `wait_for_verdict` | Long-poll for the challenge verdict — returns structured outcome including otp_code, magic_link, webauthn_required, or policy_denied |
 | `get_messages` | List raw SMS messages received on a session |
 | `release_number` | Release a session early (allocation returned to pool) |
@@ -75,7 +75,7 @@ The hosted endpoint uses stateless HTTP and does not issue `mcp-session-id` head
 
 ## Auth
 
-Set `AGENTSIM_API_KEY` in your environment. Get your key at [console.agentsim.dev](https://console.agentsim.dev).
+For stdio, set `AGENTSIM_API_KEY` in the process environment. For hosted HTTP, every request must send its own `x-api-key`; the server validates and forwards that caller-scoped key. Get a key at [console.agentsim.dev](https://console.agentsim.dev).
 
 ## Supported Countries
 

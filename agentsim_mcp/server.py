@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 import sys
+from contextvars import ContextVar
+from hashlib import sha256
+from time import monotonic
 from typing import Any, Optional
 
 import httpx
@@ -20,7 +23,7 @@ It opens challenges (SMS OTP, email OTP, magic links, WebAuthn detect-and-halt),
 and releases sessions when finished.
 
 Typical workflow:
-1. Call `open_challenge` with a channel (sms_otp | email_otp | magic_link | webauthn_required).
+1. Call `open_challenge` with the owned service_url and a channel (sms_otp | email_otp | magic_link | webauthn_required).
 2. Trigger the challenge in your target service or controlled auth workflow.
 3. Call `wait_for_verdict` with the session_id — it blocks until the outcome arrives or times out.
 4. If the verdict is policy_denied or webauthn_required, stop — these are control-plane halts.
@@ -39,6 +42,9 @@ mcp = FastMCP("AgentSIM", version="0.9.0", instructions=MCP_INSTRUCTIONS)
 _API_KEY = os.environ.get("AGENTSIM_API_KEY", "")
 _BASE_URL = os.environ.get("AGENTSIM_BASE_URL", "https://api.agentsim.dev/v1").rstrip("/")
 _PORT = int(os.environ.get("PORT", "8000"))
+_request_api_key: ContextVar[Optional[str]] = ContextVar("agentsim_request_api_key", default=None)
+_validated_keys: dict[str, float] = {}
+_http_mode = False
 
 
 async def _health(request: Request) -> JSONResponse:
@@ -77,15 +83,19 @@ def _get_http() -> httpx.AsyncClient:
     if _http is None or _http.is_closed:
         _http = httpx.AsyncClient(
             base_url=_BASE_URL,
-            headers={"x-api-key": _API_KEY, "Content-Type": "application/json"},
+            headers={"Content-Type": "application/json"},
             timeout=130.0,
         )
     return _http
 
 
 async def _request(method: str, path: str, params: Optional[dict[str, str]] = None, **kwargs: Any) -> Any:
+    api_key = _request_api_key.get() if _http_mode else _API_KEY
+    if not api_key:
+        raise ToolError("AgentSIM API key is not configured for this request.")
     client = _get_http()
-    response = await client.request(method, path, params=params, **kwargs)
+    headers = {**kwargs.pop("headers", {}), "x-api-key": api_key}
+    response = await client.request(method, path, params=params, headers=headers, **kwargs)
     try:
         body = response.json()
     except Exception:
@@ -102,7 +112,7 @@ async def _request(method: str, path: str, params: Optional[dict[str, str]] = No
 @mcp.resource("agentsim://status")
 async def account_status() -> str:
     """Current AgentSIM account status including active sessions and usage."""
-    if not _API_KEY:
+    if not (_request_api_key.get() if _http_mode else _API_KEY):
         return "AGENTSIM_API_KEY not configured. Get one at https://console.agentsim.dev"
     try:
         data = await _request("GET", "/sessions")
@@ -168,7 +178,7 @@ def verify_phone_number(service: str = "staging auth flow", agent_id: str = "my-
     return f"""Follow these steps to run an auth challenge on {service}:
 
 1. Check https://docs.agentsim.dev/supported-services if {service} is a third-party target. Google and Stripe are refused.
-2. Call open_challenge with agent_id="{agent_id}" (channel defaults to sms_otp)
+2. Call open_challenge with agent_id="{agent_id}" and the owned service's HTTPS service_url (channel defaults to sms_otp)
 3. Enter the returned identifier on {service} (an app you own)
 4. Call wait_for_verdict with the session_id
 5. If wait_for_verdict times out, call get_messages and classify the outcome
@@ -208,7 +218,7 @@ Common causes:
 class OpenChallengeInput(BaseModel):
     agent_id: str = Field(description="Unique identifier for the agent requesting the challenge (e.g. 'checkout-bot').")
     channel: str = Field(default="sms_otp", description="Challenge channel: sms_otp | email_otp | magic_link | webauthn_required.")
-    service_url: Optional[str] = Field(default=None, description="Optional URL of the target service for policy evaluation.")
+    service_url: str = Field(description="HTTPS origin of the owned target service. Required for policy evaluation.")
     country: str = Field(default="US", description="ISO 3166-1 alpha-2 country code (sms_otp only). Supported: US.")
     ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="How long to hold the session (seconds). Default 1 hour.")
     webhook_url: Optional[str] = Field(default=None, description="Optional HTTPS URL to receive verdict via webhook instead of polling.")
@@ -216,6 +226,7 @@ class OpenChallengeInput(BaseModel):
 
 class ProvisionInput(BaseModel):
     agent_id: str = Field(description="Unique identifier for the agent requesting the number (e.g. 'checkout-bot').")
+    service_url: str = Field(description="HTTPS origin of the owned target service. Required for policy evaluation.")
     country: str = Field(default="US", description="ISO 3166-1 alpha-2 country code. Supported: US. More countries coming soon.")
     ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="How long to hold the number (seconds). Default 1 hour.")
     webhook_url: Optional[str] = Field(default=None, description="Optional HTTPS URL to receive OTP via webhook instead of polling.")
@@ -276,9 +287,6 @@ async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
     Next step: use the returned identifier on your target service to trigger the challenge,
     then call `wait_for_verdict` with the returned `session_id`.
     """
-    if not _API_KEY:
-        raise ToolError("AGENTSIM_API_KEY environment variable is not set.")
-
     body: dict[str, Any] = {
         "agent_id": input.agent_id,
         "channel": input.channel,
@@ -286,8 +294,7 @@ async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
     }
     if input.channel == "sms_otp":
         body["country"] = input.country
-    if input.service_url:
-        body["service_url"] = input.service_url
+    body["service_url"] = input.service_url
     if input.webhook_url:
         body["webhook_url"] = input.webhook_url
 
@@ -326,14 +333,12 @@ async def provision_number(input: ProvisionInput) -> dict[str, Any]:
     Next step: use the returned `number` on an app you own to trigger the wall,
     then call `wait_for_verdict` (or the `wait_for_otp` alias) with the `session_id`.
     """
-    if not _API_KEY:
-        raise ToolError("AGENTSIM_API_KEY environment variable is not set.")
-
     body: dict[str, Any] = {
         "agent_id": input.agent_id,
         "country": input.country,
         "ttl_seconds": input.ttl_seconds,
         "channel": "sms_otp",
+        "service_url": input.service_url,
     }
     if input.webhook_url:
         body["webhook_url"] = input.webhook_url
@@ -523,8 +528,48 @@ class _WellKnownMiddleware:
             await self.app(scope, receive, send)
 
 
+async def _validate_api_key(api_key: str) -> bool:
+    digest = sha256(api_key.encode()).hexdigest()
+    if _validated_keys.get(digest, 0) > monotonic():
+        return True
+    try:
+        response = await _get_http().get("/usage/summary", headers={"x-api-key": api_key})
+    except httpx.HTTPError:
+        return False
+    if not response.is_success:
+        return False
+    _validated_keys[digest] = monotonic() + 60
+    return True
+
+
+class _ApiKeyMiddleware:
+    """Require and isolate one caller-owned AgentSIM key per hosted request."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or scope.get("path") in {"/health", "/.well-known/mcp/server-card.json"}:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
+        api_key = headers.get("x-api-key", "").strip()
+        if not api_key or not await _validate_api_key(api_key):
+            await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+            return
+
+        token = _request_api_key.set(api_key)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_api_key.reset(token)
+
+
 def main() -> None:
+    global _http_mode
     http_mode = "--sse" in sys.argv or "--http" in sys.argv
+    _http_mode = http_mode
     if http_mode:
         from starlette.applications import Starlette
         from starlette.routing import Route, Mount
@@ -541,7 +586,7 @@ def main() -> None:
             ],
             lifespan=mcp_http.lifespan,
         )
-        app = _WellKnownMiddleware(starlette_app)
+        app = _WellKnownMiddleware(_ApiKeyMiddleware(starlette_app))
         uvicorn.run(app, host="0.0.0.0", port=_PORT)
     else:
         mcp.run(transport="stdio")
