@@ -7,7 +7,7 @@ import sys
 from contextvars import ContextVar
 from hashlib import sha256
 from time import monotonic
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import httpx
 from fastmcp import FastMCP
@@ -29,7 +29,7 @@ Typical workflow:
 4. If the verdict is policy_denied or webauthn_required, stop — these are control-plane halts.
 5. Call `release_number` to return the allocation to the pool when done.
 
-Supported channels: sms_otp (programmable US numbers), email_otp (mock inject), magic_link (mock inject),
+Supported channels: sms_otp (programmable US numbers), email_otp (injected test messages only), magic_link (injected test messages only),
 webauthn_required (detect-and-halt). Policy layer blocks third-party services by default; allow your
 staging/development services through account policies. Check https://docs.agentsim.dev/policies-verdicts.
 
@@ -115,9 +115,9 @@ async def account_status() -> str:
     if not (_request_api_key.get() if _http_mode else _API_KEY):
         return "AGENTSIM_API_KEY not configured. Get one at https://console.agentsim.dev"
     try:
-        data = await _request("GET", "/sessions")
+        data = await _request("GET", "/sessions", params={"status": "active", "limit": "100"})
         sessions = data.get("sessions", [])
-        return f"Active sessions: {len(sessions)}\n" + "\n".join(
+        return f"Active sessions: {len(sessions)}{'+' if data.get('has_more') else ''}\n" + "\n".join(
             f"  - {s.get('number', 'unknown')} (agent: {s.get('agent_id', 'unknown')}, expires: {s.get('expires_at', 'unknown')})"
             for s in sessions
         ) if sessions else "No active sessions."
@@ -131,7 +131,9 @@ def quickstart_guide() -> str:
     return """# AgentSIM Quickstart
 
 ## 1. Get an API Key
-Sign up at https://agentsim.dev and grab your API key from the dashboard.
+Try the free sample-message demo at https://console.agentsim.dev. Create an API key under Keys.
+The new paid live offer is not open yet; existing agreements remain unchanged.
+Check https://docs.agentsim.dev/availability and your account access before live SMS.
 
 ## 2. Install
 ```bash
@@ -140,6 +142,7 @@ claude mcp add agentsim -e AGENTSIM_API_KEY=asm_live_xxx -- uvx agentsim-mcp
 
 # Or use the remote server (no install needed)
 # URL: https://mcp.agentsim.dev/mcp
+# Header: x-api-key: YOUR_API_KEY
 ```
 
 ## 3. Run a challenge
@@ -147,7 +150,7 @@ Ask your AI assistant:
 > "Use AgentSIM to test my staging phone OTP wall. Open a challenge, wait up to 120 seconds for the verdict, inspect messages if nothing arrives, and close the session."
 
 The agent will:
-1. Call open_challenge (sms_otp by default)
+1. Call open_challenge with agent_id and the real public HTTPS service_url you own (sms_otp by default)
 2. Enter the identifier on the owned auth wall
 3. Call wait_for_verdict
 4. Inspect messages if the verdict is a timeout
@@ -155,10 +158,10 @@ The agent will:
 
 provision_number and wait_for_otp remain aliases.
 
-## Pricing
-- 10 free sessions/month
-- $0.99 per session after that
-- No monthly commitment
+## Access and terms
+- The console demo uses sample messages and sends no SMS.
+- Live access depends on your account. See https://docs.agentsim.dev/availability.
+- Review your terms at https://console.agentsim.dev/billing. A timeout is not a refund.
 
 ## Links
 - Docs: https://docs.agentsim.dev
@@ -177,7 +180,7 @@ def verify_phone_number(service: str = "staging auth flow", agent_id: str = "my-
     """
     return f"""Follow these steps to run an auth challenge on {service}:
 
-1. Check https://docs.agentsim.dev/supported-services if {service} is a third-party target. Google and Stripe are refused.
+1. Confirm that you own {service} and have available live allowance (Hobby includes 10 US SMS sessions per month, one active per account). Check https://docs.agentsim.dev/supported-services. Google and Stripe are refused.
 2. Call open_challenge with agent_id="{agent_id}" and the owned service's HTTPS service_url (channel defaults to sms_otp)
 3. Enter the returned identifier on {service} (an app you own)
 4. Call wait_for_verdict with the session_id
@@ -240,7 +243,7 @@ class WaitForVerdictInput(BaseModel):
 class WaitInput(BaseModel):
     session_id: str = Field(description="Session ID returned by provision_number.")
     timeout_seconds: int = Field(default=60, ge=1, le=120, description="Maximum seconds to wait. Default 60.")
-    auto_reroute: bool = Field(default=True, description="On timeout, automatically swap to a fresh number on the same session and return retry instructions.")
+    auto_reroute: bool = Field(default=True, description="On timeout, request a session extension and return retry instructions. The number may stay the same; an extension can use live allowance.")
 
 
 class SessionInput(BaseModel):
@@ -248,7 +251,7 @@ class SessionInput(BaseModel):
 
 
 async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str, Any]:
-    """Swap to a fresh number on the same session after a carrier timeout."""
+    """Request a session extension after a wait timeout."""
     session = await _request("GET", f"/sessions/{session_id}")
     country = session.get("country", "US")
     previous_number = session.get("number", "unknown")
@@ -263,11 +266,11 @@ async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str
         "country": country,
         "expires_at": reroute.get("expires_at"),
         "message": (
-            f"The first number ({previous_number}) timed out after {timeout_seconds}s — "
-            "likely US carrier cold-start filtering on a new longcode. "
-            f"A replacement number ({reroute['new_number']}) has been assigned to the same session. "
-            "Re-enter this new number on the target service, then call wait_for_otp again "
-            f"with session_id='{session_id}'."
+            f"No code was returned within {timeout_seconds}s. "
+            f"The session was extended with number {reroute['new_number']}; it may be unchanged. "
+            "This does not identify the delivery failure or resend an SMS. "
+            "Check your app's delivery logs before requesting another code. "
+            f"Use wait_for_verdict with session_id='{session_id}' to wait again."
         ),
     }
 
@@ -278,14 +281,15 @@ async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str
 async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
     """Open an authentication challenge session.
 
-    Supports multiple channels: sms_otp (programmable US number), email_otp (mock inbox),
-    magic_link (mock inbox), and webauthn_required (detect-and-halt).
+    Supports multiple channels: sms_otp (programmable US number), email_otp (test inbox, no email delivery),
+    magic_link (test inbox, no email delivery), and webauthn_required (detect-and-halt).
 
     Returns the challenge identifier (phone number or email address) and a session_id
     needed for all subsequent calls. The session is reserved for ttl_seconds.
 
-    Next step: use the returned identifier on your target service to trigger the challenge,
-    then call `wait_for_verdict` with the returned `session_id`.
+    For SMS, enter the number in your owned app and request its code. Email channels
+    require injected test messages; their inboxes cannot receive email. Then call
+    `wait_for_verdict` with the returned `session_id`.
     """
     body: dict[str, Any] = {
         "agent_id": input.agent_id,
@@ -313,7 +317,7 @@ async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:
         result["next_step"] = f"Use `{data['number']}` on your target service, then call wait_for_verdict(session_id='{data['session_id']}')"
     elif input.channel in ("email_otp", "magic_link"):
         result["inbox_address"] = data.get("inbox_address", data.get("email"))
-        result["next_step"] = f"Use `{result['inbox_address']}` on your target service, then call wait_for_verdict(session_id='{data['session_id']}')"
+        result["next_step"] = f"This test inbox cannot receive email. Inject a test body through POST /v1/sessions/{data['session_id']}/inject-email, then call wait_for_verdict(session_id='{data['session_id']}')."
     else:
         result["next_step"] = f"Call wait_for_verdict(session_id='{data['session_id']}') to check for policy or WebAuthn verdicts"
 
@@ -444,10 +448,9 @@ async def wait_for_otp(input: WaitInput) -> dict[str, Any]:
 
 @mcp.tool()
 async def get_messages(input: SessionInput) -> dict[str, Any]:
-    """List all SMS messages received in this session without consuming the OTP.
+    """Read the first page of SMS metadata and parsed codes, without raw bodies.
 
-    Use this to inspect raw messages or check if an SMS arrived before calling
-    wait_for_verdict. Does NOT mark the OTP as consumed.
+    Reading a parsed OTP marks it consumed. A later wait will not return it.
     """
     data = await _request("GET", f"/sessions/{input.session_id}/messages")
     return {
@@ -479,20 +482,23 @@ async def release_number(input: SessionInput) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def list_numbers(agent_id: Optional[str] = None) -> dict[str, Any]:
+async def list_numbers(
+    agent_id: Optional[str] = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 100,
+    after: Optional[str] = None,
+) -> dict[str, Any]:
     """List active challenge sessions, optionally filtered by agent_id.
 
     Use this to check for leaked sessions or inspect what is currently active.
+    If has_more is true, pass the last session_id as after to get the next page.
     """
-    query_params = {"agent_id": agent_id} if agent_id else None
-
-    try:
-        data = await _request("GET", "/sessions", params=query_params)
-    except ToolError:
-        # GET /sessions may not be implemented yet — return empty gracefully
-        return {"sessions": [], "note": "Session listing not yet available."}
-
-    return {"sessions": data.get("sessions", [])}
+    query_params = {"status": "active", "limit": str(limit)}
+    if agent_id is not None:
+        query_params["agent_id"] = agent_id
+    if after is not None:
+        query_params["after"] = after
+    data = await _request("GET", "/sessions", params=query_params)
+    return {"sessions": data["sessions"], "has_more": data["has_more"]}
 
 
 class _WellKnownMiddleware:

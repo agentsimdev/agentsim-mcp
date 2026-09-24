@@ -8,6 +8,7 @@ import asyncio
 import httpx
 import pytest
 import uvicorn
+from fastmcp.exceptions import ToolError
 from starlette.testclient import TestClient
 import agentsim_mcp.server as server
 
@@ -193,3 +194,54 @@ async def test_stdio_keeps_the_local_environment_key(monkeypatch) -> None:
     await server._request("GET", "/usage/summary")
     await client.aclose()
     assert seen == ["asm_test_local"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("populated", [False, True])
+async def test_list_numbers_returns_active_sessions_and_pagination(monkeypatch, populated) -> None:
+    sessions = [{"session_id": "session-one", "agent_id": "qa-agent"}] if populated else []
+    body = {"sessions": sessions, "has_more": populated}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/sessions"
+        assert dict(request.url.params) == {
+            "status": "active", "agent_id": "qa-agent", "limit": "1", "after": "previous-session",
+        }
+        assert request.headers["x-api-key"] == "asm_test_listing"
+        return httpx.Response(200, json=body)
+
+    async with httpx.AsyncClient(base_url="https://api.test/v1", transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(server, "_http", client)
+        monkeypatch.setattr(server, "_http_mode", False)
+        monkeypatch.setattr(server, "_API_KEY", "asm_test_listing")
+        result = await mcp.call_tool("list_numbers", {"agent_id": "qa-agent", "limit": 1, "after": "previous-session"})
+    assert result.structured_content == body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,code", [(401, "unauthorized"), (403, "forbidden"), (404, "not_found"), (500, "internal_error")])
+async def test_list_numbers_does_not_report_api_failures_as_an_empty_account(monkeypatch, status, code) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == {"status": "active", "limit": "100"}
+        return httpx.Response(status, json={"error": code, "message": "Listing failed"})
+
+    async with httpx.AsyncClient(base_url="https://api.test/v1", transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(server, "_http", client)
+        monkeypatch.setattr(server, "_http_mode", False)
+        monkeypatch.setattr(server, "_API_KEY", "asm_test_listing")
+        with pytest.raises(ToolError, match=code):
+            await mcp.call_tool("list_numbers", {})
+
+
+@pytest.mark.asyncio
+async def test_account_status_only_counts_active_sessions(monkeypatch) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert dict(request.url.params) == {"status": "active", "limit": "100"}
+        return httpx.Response(200, json={"sessions": [{"agent_id": "qa-agent"}], "has_more": True})
+
+    async with httpx.AsyncClient(base_url="https://api.test/v1", transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(server, "_http", client)
+        monkeypatch.setattr(server, "_http_mode", False)
+        monkeypatch.setattr(server, "_API_KEY", "asm_test_listing")
+        result = await server.account_status()
+    assert "Active sessions: 1+" in result
