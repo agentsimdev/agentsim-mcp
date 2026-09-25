@@ -64,6 +64,7 @@ The hosted endpoint uses stateless HTTP and does not issue `mcp-session-id` head
 
 | Tool | Description |
 |------|-------------|
+| `identify_agent` | Add a stable agent ID to the console without opening a challenge, sending SMS, or using allowance |
 | `open_challenge` | Open an authentication challenge session for a required owned `service_url`; accepts channel (sms_otp \| email_otp \| magic_link \| webauthn_required), returns session ID + identifier |
 | `wait_for_verdict` | Long-poll for the challenge verdict — returns structured outcome including otp_code, magic_link, or webauthn_required; policy denial fails on open |
 | `get_messages` | Read SMS metadata and parsed codes; reading codes consumes them |

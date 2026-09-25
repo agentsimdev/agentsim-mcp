@@ -23,11 +23,12 @@ It opens challenges (SMS OTP, email OTP, magic links, WebAuthn detect-and-halt),
 and releases sessions when finished.
 
 Typical workflow:
-1. Call `open_challenge` with the owned service_url and a channel (sms_otp | email_otp | magic_link | webauthn_required).
-2. Trigger the challenge in your target service or controlled auth workflow.
-3. Call `wait_for_verdict` with the session_id — it blocks until the outcome arrives or times out.
-4. If the verdict is policy_denied or webauthn_required, stop — these are control-plane halts.
-5. Call `release_number` to return the allocation to the pool when done.
+1. Call `identify_agent` once with a stable agent_id to add this agent to the console without opening a challenge.
+2. Call `open_challenge` with the owned service_url and a channel (sms_otp | email_otp | magic_link | webauthn_required).
+3. Trigger the challenge in your target service or controlled auth workflow.
+4. Call `wait_for_verdict` with the session_id — it blocks until the outcome arrives or times out.
+5. If the verdict is policy_denied or webauthn_required, stop — these are control-plane halts.
+6. Call `release_number` to return the allocation to the pool when done.
 
 Supported channels: sms_otp (programmable US numbers), email_otp (injected test messages only), magic_link (injected test messages only),
 webauthn_required (detect-and-halt). Policy layer blocks third-party services by default; allow your
@@ -227,6 +228,10 @@ class OpenChallengeInput(BaseModel):
     webhook_url: Optional[str] = Field(default=None, description="Optional HTTPS URL to receive verdict via webhook instead of polling.")
 
 
+class IdentifyAgentInput(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=128, description="Stable identifier for this agent (e.g. 'checkout-bot').")
+
+
 class ProvisionInput(BaseModel):
     agent_id: str = Field(description="Unique identifier for the agent requesting the number (e.g. 'checkout-bot').")
     service_url: str = Field(description="HTTPS origin of the owned target service. Required for policy evaluation.")
@@ -276,6 +281,15 @@ async def _reroute_on_timeout(session_id: str, timeout_seconds: int) -> dict[str
 
 
 # --- Tools ---
+
+@mcp.tool()
+async def identify_agent(input: IdentifyAgentInput) -> dict[str, Any]:
+    """Add an agent to the AgentSIM console without opening a challenge.
+
+    Use a stable agent_id after connecting. This creates no session, sends no SMS,
+    and does not use live allowance or billing.
+    """
+    return await _request("POST", "/agents/identify", json={"agent_id": input.agent_id})
 
 @mcp.tool()
 async def open_challenge(input: OpenChallengeInput) -> dict[str, Any]:

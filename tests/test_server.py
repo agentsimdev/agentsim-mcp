@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -13,6 +14,7 @@ from starlette.testclient import TestClient
 import agentsim_mcp.server as server
 
 from agentsim_mcp.server import (
+    IdentifyAgentInput,
     OpenChallengeInput,
     ProvisionInput,
     SessionInput,
@@ -25,6 +27,7 @@ from agentsim_mcp.server import (
 
 EXPECTED_TOOLS = {
     # New control-plane nouns
+    "identify_agent",
     "open_challenge",
     "wait_for_verdict",
     # Legacy aliases (backward compatibility)
@@ -128,6 +131,12 @@ def test_open_challenge_input_defaults() -> None:
     assert inp.service_url == "https://staging.example.com"
 
 
+def test_identify_agent_input_requires_a_stable_id() -> None:
+    assert IdentifyAgentInput(agent_id="codex-local").agent_id == "codex-local"
+    with pytest.raises(Exception):
+        IdentifyAgentInput(agent_id="")
+
+
 def test_open_challenge_input_channels() -> None:
     for channel in ["sms_otp", "email_otp", "magic_link", "webauthn_required"]:
         inp = OpenChallengeInput(agent_id="test-bot", service_url="https://staging.example.com", channel=channel)
@@ -216,6 +225,24 @@ async def test_list_numbers_returns_active_sessions_and_pagination(monkeypatch, 
         monkeypatch.setattr(server, "_API_KEY", "asm_test_listing")
         result = await mcp.call_tool("list_numbers", {"agent_id": "qa-agent", "limit": 1, "after": "previous-session"})
     assert result.structured_content == body
+
+
+@pytest.mark.asyncio
+async def test_identify_agent_registers_without_opening_a_session(monkeypatch) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/agents/identify"
+        assert request.headers["x-api-key"] == "asm_test_identify"
+        assert json.loads(request.content) == {"agent_id": "codex-local"}
+        return httpx.Response(201, json={"agent_id": "codex-local", "status": "identified"})
+
+    async with httpx.AsyncClient(base_url="https://api.test/v1", transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(server, "_http", client)
+        monkeypatch.setattr(server, "_http_mode", False)
+        monkeypatch.setattr(server, "_API_KEY", "asm_test_identify")
+        result = await server.identify_agent(IdentifyAgentInput(agent_id="codex-local"))
+
+    assert result == {"agent_id": "codex-local", "status": "identified"}
 
 
 @pytest.mark.asyncio
