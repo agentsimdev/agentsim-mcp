@@ -2,7 +2,7 @@
 
 <!-- mcp-name: dev.agentsim/mcp -->
 
-**Availability:** Live SMS is self-serve for owned public HTTPS services after exact-origin verification and an allow policy. Hobby includes 10 live US SMS sessions per UTC month, with one active live session per account and no card required. Billing shows current paid terms before checkout and preserves any existing agreement. Check [current access and channel support](https://docs.agentsim.dev/availability) before using live examples.
+**Availability:** Live SMS is self-serve for owned public HTTPS services after exact-origin verification and an allow policy. Hobby includes 10 live US SMS sessions per UTC month, with one active live session per account and no card required. Builder is $99/month and includes 50 live US SMS sessions. Checkout shows tax and renewal terms before payment, and existing agreements keep their terms. Check [current access and channel support](https://docs.agentsim.dev/availability) before using live examples.
 
 MCP server that exposes AgentSIM challenge tools to AI coding assistants: Codex CLI, Claude Code, Cursor, Windsurf, and any other MCP-compatible host. Primary tools: `open_challenge`, `wait_for_verdict`. Aliases: `provision_number`, `wait_for_otp`.
 
